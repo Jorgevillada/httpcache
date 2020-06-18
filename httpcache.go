@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -139,6 +140,7 @@ func varyMatches(cachedResp *http.Response, req *http.Request) bool {
 func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
 	cacheKey := cacheKey(req)
 	cacheable := (req.Method == "GET" || req.Method == "HEAD") && req.Header.Get("range") == ""
+	debugLine := fmt.Sprintf("REPO-DEBUG: %s", cacheKey)
 	var cachedResp *http.Response
 	if cacheable {
 		cachedResp, err = CachedResponse(t.Cache, req)
@@ -161,10 +163,13 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 			// Can only use cached value if the new request doesn't Vary significantly
 			freshness := getFreshness(cachedResp.Header, req.Header)
 			if freshness == fresh {
+				debugLine = debugLine + ",FRESH, 200"
+				fmt.Println(debugLine)
 				return cachedResp, nil
 			}
 
 			if freshness == stale {
+				debugLine = debugLine + ",STALE"
 				var req2 *http.Request
 				// Add validators if caller hasn't already done so
 				etag := cachedResp.Header.Get("etag")
@@ -183,9 +188,14 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 					req = req2
 				}
 			}
+
+			if freshness == transparent {
+				debugLine = debugLine + ",TRANSPARENT"
+			}
 		}
 
 		resp, err = transport.RoundTrip(req)
+		debugLine = debugLine + fmt.Sprintf(",%d", resp.StatusCode)
 		if err == nil && req.Method == "GET" && resp.StatusCode == http.StatusNotModified {
 			// Replace the 304 response with the one from cache, but update with some new headers
 			endToEndHeaders := getEndToEndHeaders(resp.Header)
@@ -203,16 +213,20 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 				t.Cache.Delete(cacheKey)
 			}
 			if err != nil {
+				fmt.Println(debugLine)
 				return nil, err
 			}
 		}
 	} else {
+		debugLine = debugLine + ",NO-CACHE"
 		reqCacheControl := parseCacheControl(req.Header)
 		if _, ok := reqCacheControl["only-if-cached"]; ok {
 			resp = newGatewayTimeoutResponse(req)
 		} else {
 			resp, err = transport.RoundTrip(req)
+			debugLine = debugLine + fmt.Sprintf(",%d", resp.StatusCode)
 			if err != nil {
+				fmt.Println(debugLine)
 				return nil, err
 			}
 		}
@@ -250,6 +264,7 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	} else {
 		t.Cache.Delete(cacheKey)
 	}
+	fmt.Println(debugLine)
 	return resp, nil
 }
 
