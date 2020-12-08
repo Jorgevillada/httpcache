@@ -125,11 +125,11 @@ func NewTransport(c Cache, options ...TransportOption) *Transport {
 	return transport
 }
 
-type TransportOption func(transport *Transport)
+type TransportOption func(transport *Transport) *Transport
 
 // Adds the provided headers to the VaryIgnoreMask on the Transport.
 func WithVaryIgnoreMask(headers ...string) TransportOption {
-	return func(transport *Transport) {
+	return func(transport *Transport) *Transport {
 		mask := transport.VaryIgnoreMask
 		if mask == nil {
 			mask = make(map[string]bool)
@@ -140,6 +140,7 @@ func WithVaryIgnoreMask(headers ...string) TransportOption {
 		}
 
 		transport.VaryIgnoreMask = mask
+        return transport
 	}
 }
 
