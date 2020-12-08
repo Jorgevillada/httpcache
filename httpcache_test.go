@@ -1570,3 +1570,20 @@ func TestTransportVaryMatchesWithMask(t *testing.T) {
 		}
 	}
 }
+
+func TestWithVaryIgnoreMask(t *testing.T) {
+	resetTest()
+	transport := NewTransport(NewMemoryCache())
+
+	headers := []string{"header1", "header2", "header3"}
+	WithVaryIgnoreMask(headers...)(transport)
+
+	switch {
+	case !transport.VaryIgnoreMask["Header1"]:
+		fallthrough
+	case !transport.VaryIgnoreMask["Header2"]:
+		fallthrough
+	case !transport.VaryIgnoreMask["Header3"]:
+		t.Fatalf(`Headers improperly added to mask: %v`, transport.VaryIgnoreMask)
+	}
+}
