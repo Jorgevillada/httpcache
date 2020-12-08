@@ -103,12 +103,44 @@ type Transport struct {
 	Cache     Cache
 	// If true, responses returned from the cache will be given an extra header, X-From-Cache
 	MarkCachedResponses bool
+	// A map of strings representing values in a "Vary" header. When specified, values in the
+	// VaryIgnoreMask will not be assessed when determining whether a request should hit or
+	// bypass the cache. It will also prevent the addition of a `"X-Varied"+header` in the
+	// response. This is useful, for example, if you don't want to cache the contents of
+	// an Authorization header. Strings passed into this mask should be canonical headers.
+	VaryIgnoreMask map[string]bool
 }
 
 // NewTransport returns a new Transport with the
 // provided Cache implementation and MarkCachedResponses set to true
-func NewTransport(c Cache) *Transport {
-	return &Transport{Cache: c, MarkCachedResponses: true}
+func NewTransport(c Cache, options ...TransportOption) *Transport {
+	transport := &Transport{
+		Cache: c, MarkCachedResponses: true,
+	}
+
+	for _, option := range options {
+		option(transport)
+	}
+
+	return transport
+}
+
+type TransportOption func(transport *Transport)
+
+// Adds the provided headers to the VaryIgnoreMask on the Transport.
+func WithVaryIgnoreMask(headers ...string) TransportOption {
+	return func(transport *Transport) {
+		mask := transport.VaryIgnoreMask
+		if mask == nil {
+			mask = make(map[string]bool)
+		}
+
+		for _, header := range headers {
+			mask[http.CanonicalHeaderKey(header)] = true
+		}
+
+		transport.VaryIgnoreMask = mask
+	}
 }
 
 // Client returns an *http.Client that caches responses.
@@ -117,11 +149,15 @@ func (t *Transport) Client() *http.Client {
 }
 
 // varyMatches will return false unless all of the cached values for the headers listed in Vary
-// match the new request
-func varyMatches(cachedResp *http.Response, req *http.Request) bool {
+// match the new request. If the Transport has a VaryIgnoreMask set then only headers not in the
+// mask will be considered.
+func (t *Transport) varyMatches(cachedResp *http.Response, req *http.Request) bool {
 	for _, header := range headerAllCommaSepValues(cachedResp.Header, "vary") {
 		header = http.CanonicalHeaderKey(header)
 		if header != "" && req.Header.Get(header) != cachedResp.Header.Get("X-Varied-"+header) {
+			if t.VaryIgnoreMask != nil && t.VaryIgnoreMask[header] {
+				continue
+			}
 			return false
 		}
 	}
@@ -157,7 +193,7 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 			cachedResp.Header.Set(XFromCache, "1")
 		}
 
-		if varyMatches(cachedResp, req) {
+		if t.varyMatches(cachedResp, req) {
 			// Can only use cached value if the new request doesn't Vary significantly
 			freshness := getFreshness(cachedResp.Header, req.Header)
 			if freshness == fresh {

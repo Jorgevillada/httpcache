@@ -163,9 +163,6 @@ func setup() {
 	mux.HandleFunc("/json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "max-age=3600")
 		w.Header().Set("Content-Type", "application/json")
-		// This will force using bufio.Read() instead of chunkedReader.Read()
-		// to miss the EOF.
-		w.Header().Set("Transfer-encoding", "identity")
 		json.NewEncoder(w).Encode(map[string]string{"k": "v"})
 	}))
 }
@@ -1518,5 +1515,75 @@ func TestClientTimeout(t *testing.T) {
 	}
 	if taken >= 2*time.Second {
 		t.Error("client.Do took 2+ seconds, want < 2 seconds")
+	}
+}
+
+// TestTransport_varyMatches tests that the VaryIgnoreMask values are properly masked when
+// determining whether a cached response is returned or not.
+func TestTransportVaryMatchesWithMask(t *testing.T) {
+	resetTest()
+	s.transport.VaryIgnoreMask = map[string]bool{"Accept": true}
+	req, err := http.NewRequest("GET", s.server.URL+"/varyaccept", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Initial Accept header
+	req.Header.Set("Accept", "text/plain")
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get("Vary") != "Accept" {
+			t.Fatalf(`Vary header isn't "Accept": %v`, resp.Header.Get("Vary"))
+		}
+		_, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Verify next request uses cache
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get(XFromCache) != "1" {
+			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
+		}
+	}
+
+	// Change Accept header to a different value. Ensure return is still a cached response.
+	req.Header.Set("Accept", "text/html")
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get(XFromCache) != "1" {
+			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
+		}
+	}
+}
+
+func TestWithVaryIgnoreMask(t *testing.T) {
+	resetTest()
+	transport := NewTransport(NewMemoryCache())
+
+	headers := []string{"header1", "header2", "header3"}
+	WithVaryIgnoreMask(headers...)(transport)
+
+	switch {
+	case !transport.VaryIgnoreMask["Header1"]:
+		fallthrough
+	case !transport.VaryIgnoreMask["Header2"]:
+		fallthrough
+	case !transport.VaryIgnoreMask["Header3"]:
+		t.Fatalf(`Headers improperly added to mask: %v`, transport.VaryIgnoreMask)
 	}
 }
