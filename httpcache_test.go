@@ -185,6 +185,7 @@ func teardown() {
 
 func resetTest() {
 	s.transport.Cache = NewMemoryCache()
+	s.transport.VaryIgnoreMask = nil
 	clock = &realClock{}
 }
 
@@ -1598,6 +1599,7 @@ func TestTransportVaryMatchesWithMask(t *testing.T) {
 func TestLastModifiedWithVaryIgnoreMask(t *testing.T) {
 	// Initial request
 	resetTest()
+	s.transport.VaryIgnoreMask = map[string]bool{"Accept": true}
 	req, err := http.NewRequest("GET", s.server.URL+"/varylastmodified", nil)
 	if err != nil {
 		t.Fatal(err)
