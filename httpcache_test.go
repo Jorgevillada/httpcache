@@ -100,6 +100,17 @@ func setup() {
 		w.Header().Set("Vary", "Accept")
 		w.Write([]byte("Some text content"))
 	}))
+	mux.HandleFunc("/varylastmodified", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "max-age=1")
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Vary", "Accept")
+		lm := "Fri, 14 Dec 2010 01:01:50 GMT"
+		if r.Header.Get("if-modified-since") == lm {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("last-modified", lm)
+	}))
 
 	mux.HandleFunc("/doublevary", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "max-age=3600")
@@ -174,6 +185,7 @@ func teardown() {
 
 func resetTest() {
 	s.transport.Cache = NewMemoryCache()
+	s.transport.VaryIgnoreMask = nil
 	clock = &realClock{}
 }
 
@@ -1567,6 +1579,78 @@ func TestTransportVaryMatchesWithMask(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.Header.Get(XFromCache) != "1" {
 			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
+		}
+	}
+
+	// Verify initial request also still caches
+	req.Header.Set("Accept", "text/plain")
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get(XFromCache) != "1" {
+			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
+		}
+	}
+}
+
+func TestLastModifiedWithVaryIgnoreMask(t *testing.T) {
+	// Initial request
+	resetTest()
+	s.transport.VaryIgnoreMask = map[string]bool{"Accept": true}
+	req, err := http.NewRequest("GET", s.server.URL+"/varylastmodified", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Set("Cache-Control", "max-age=1")
+	req.Header.Set("Accept", "text/plain")
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get(XFromCache) != "" {
+			t.Fatalf(`XFromCache header isn't blank: %v`, resp.Header.Get(XFromCache))
+		}
+		_, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Verify an immediate subsequent request is cached
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get(XFromCache) != "1" {
+			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
+		}
+		_, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(2*time.Second)
+	// Verify stale request is still cached
+	req.Header.Set("Accept", "text/html")
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get(XFromCache) != "1" {
+			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
+		}
+		_, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }
