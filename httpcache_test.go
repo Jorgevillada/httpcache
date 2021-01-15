@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -129,6 +130,13 @@ func setup() {
 		w.Header().Set("Cache-Control", "max-age=3600")
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Vary", "X-Madeup-Header")
+		w.Write([]byte("Some text content"))
+	}))
+
+	mux.HandleFunc("/contentlength", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Length", "17")
 		w.Write([]byte("Some text content"))
 	}))
 
@@ -1670,4 +1678,36 @@ func TestWithVaryIgnoreMask(t *testing.T) {
 	case !transport.VaryIgnoreMask["Header3"]:
 		t.Fatalf(`Headers improperly added to mask: %v`, transport.VaryIgnoreMask)
 	}
+}
+
+func TestWithExpectedContentLength(t *testing.T) {
+	resetTest()
+	req, err := http.NewRequest("GET", s.server.URL+"/contentlength", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.ContentLength != 17 {
+			t.Fatal(fmt.Sprintf(
+				"Incorrect content length. Expected length %d | Actual length %d",
+				17,
+				resp.ContentLength))
+		}
+		b, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(b) != 17 {
+			t.Fatal(fmt.Sprintf(
+				"Incorrect bytes length. Expected length %d | Actual length %d",
+				17,
+				len(b)))
+		}
+	}
+
 }
