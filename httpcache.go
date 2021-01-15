@@ -13,7 +13,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"net/http/httputil"
 	"strings"
 	"sync"
 	"time"
@@ -272,14 +271,14 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 				OnEOF: func(r io.Reader) {
 					resp := *resp
 					resp.Body = ioutil.NopCloser(r)
-					respBytes, err := httputil.DumpResponse(&resp, true)
+					respBytes, err := DumpResponse(&resp, true)
 					if err == nil {
 						t.Cache.Set(cacheKey, respBytes)
 					}
 				},
 			}
 		default:
-			respBytes, err := httputil.DumpResponse(resp, true)
+			respBytes, err := DumpResponse(resp, true)
 			if err == nil {
 				t.Cache.Set(cacheKey, respBytes)
 			}
@@ -585,4 +584,83 @@ func NewMemoryCacheTransport() *Transport {
 	c := NewMemoryCache()
 	t := NewTransport(c)
 	return t
+}
+
+// errNoBody is a sentinel error value used by failureToReadBody so we
+// can detect that the lack of body was intentional.
+var errNoBody = errors.New("sentinel error value")
+
+// failureToReadBody is a io.ReadCloser that just returns errNoBody on
+// Read. It's swapped in when we don't actually want to consume
+// the body, but need a non-nil one, and want to distinguish the
+// error from reading the dummy body.
+type failureToReadBody struct{}
+
+func (failureToReadBody) Read([]byte) (int, error) { return 0, errNoBody }
+func (failureToReadBody) Close() error             { return nil }
+
+// emptyBody is an instance of empty reader.
+var emptyBody = ioutil.NopCloser(strings.NewReader(""))
+
+// DumpResponse is mostly a copy of httputil.DumpResponse, but it supports copying with more
+// efficient memory usage. The only change is that the helper drainBody method now takes in an
+// expected length, so that the byte buffer can be properly allocated ahead of time.
+func DumpResponse(resp *http.Response, body bool) ([]byte, error) {
+	var b bytes.Buffer
+	var err error
+	save := resp.Body
+	savecl := resp.ContentLength
+
+	if !body {
+		// For content length of zero. Make sure the body is an empty
+		// reader, instead of returning error through failureToReadBody{}.
+		if resp.ContentLength == 0 {
+			resp.Body = emptyBody
+		} else {
+			resp.Body = failureToReadBody{}
+		}
+	} else if resp.Body == nil {
+		resp.Body = emptyBody
+	} else {
+		save, resp.Body, err = drainBody(resp.Body, savecl)
+		if err != nil {
+			return nil, err
+		}
+	}
+	err = resp.Write(&b)
+	if err == errNoBody {
+		err = nil
+	}
+	resp.Body = save
+	resp.ContentLength = savecl
+	if err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// drainBody reads all of b to memory and then returns two equivalent
+// ReadClosers yielding the same bytes.
+//
+// It returns an error if the initial slurp of all bytes fails. It does not attempt
+// to make the returned ReadClosers have identical error-matching behavior.
+func drainBody(b io.ReadCloser, expectedLength int64) (r1, r2 io.ReadCloser, err error) {
+	if b == nil || b == http.NoBody {
+		// No copying needed. Preserve the magic sentinel meaning of NoBody.
+		return http.NoBody, http.NoBody, nil
+	}
+	var buf = &bytes.Buffer{}
+	if expectedLength > 0 {
+		if _, err = io.CopyN(buf, b, expectedLength); err != nil {
+			return nil, b, err
+		}
+	} else {
+		if _, err = buf.ReadFrom(b); err != nil {
+			return nil, b, err
+		}
+	}
+	if err = b.Close(); err != nil {
+		return nil, b, err
+	}
+	return ioutil.NopCloser(buf), ioutil.NopCloser(bytes.NewReader(buf.Bytes())), nil
 }
