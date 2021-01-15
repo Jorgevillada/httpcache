@@ -622,7 +622,7 @@ func DumpResponse(resp *http.Response, body bool) ([]byte, error) {
 	} else if resp.Body == nil {
 		resp.Body = emptyBody
 	} else {
-		save, resp.Body, err = drainBody(resp.Body, savecl)
+		save, resp.Body, err = drainBody(resp.Body, int(savecl))
 		if err != nil {
 			return nil, err
 		}
@@ -644,20 +644,17 @@ func DumpResponse(resp *http.Response, body bool) ([]byte, error) {
 //
 // It returns an error if the initial slurp of all bytes fails. It does not attempt
 // to make the returned ReadClosers have identical error-matching behavior.
-func drainBody(b io.ReadCloser, expectedLength int64) (r1, r2 io.ReadCloser, err error) {
+func drainBody(b io.ReadCloser, expectedLength int) (r1, r2 io.ReadCloser, err error) {
 	if b == nil || b == http.NoBody {
 		// No copying needed. Preserve the magic sentinel meaning of NoBody.
 		return http.NoBody, http.NoBody, nil
 	}
 	var buf = &bytes.Buffer{}
 	if expectedLength > 0 {
-		if _, err = io.CopyN(buf, b, expectedLength); err != nil {
-			return nil, b, err
-		}
-	} else {
-		if _, err = buf.ReadFrom(b); err != nil {
-			return nil, b, err
-		}
+		buf.Grow(expectedLength)
+	}
+	if _, err = buf.ReadFrom(b); err != nil {
+		return nil, b, err
 	}
 	if err = b.Close(); err != nil {
 		return nil, b, err
