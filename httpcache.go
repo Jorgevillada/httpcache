@@ -223,7 +223,7 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 
 		resp, err = transport.RoundTrip(req)
 		if resp != nil && resp.Body != nil {
-				resp.Body.Close()
+			defer resp.Body.Close()
 		}
 		if err == nil && req.Method == "GET" && resp.StatusCode == http.StatusNotModified {
 			// Replace the 304 response with the one from cache, but update with some new headers
@@ -236,7 +236,7 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 			req.Method == "GET" && canStaleOnError(cachedResp.Header, req.Header) {
 			// In case of transport failure and stale-if-error activated, returns cached content
 			// when available
-			
+
 			return cachedResp, nil
 		} else {
 			if err != nil || resp.StatusCode != http.StatusOK {
